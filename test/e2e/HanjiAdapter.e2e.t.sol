@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {HanjiAdapter} from "../../src/adapters/HanjiAdapter.sol";
+import { AdapterMarketAssertions } from "../utils/AdapterMarketAssertions.sol";
+import { Test } from "forge-std/Test.sol";
+import { HanjiAdapter } from "../../src/adapters/HanjiAdapter.sol";
 
 interface IERC20HanjiE2E {
     function approve(address spender, uint256 amount) external returns (bool);
@@ -28,7 +29,8 @@ contract HanjiAdapterE2ETest is Test {
 
     function setUp() public {
         rpcUrl = vm.envOr("MONAD_RPC_URL", string(""));
-        archiveRpcUrl = vm.envOr("MONAD_ARCHIVE_RPC_URL", string(""));
+        archiveRpcUrl = vm.envOr("MONAD_ARCHIVE_RPC_URL", rpcUrl);
+        if (bytes(rpcUrl).length == 0) rpcUrl = archiveRpcUrl;
     }
 
     function test_exactBoundaryQuoteExecutes() public {
@@ -39,13 +41,14 @@ contract HanjiAdapterE2ETest is Test {
         vm.createSelectFork(archiveRpcUrl, EXACT_BLOCK);
 
         HanjiAdapter adapter = _deployAdapter();
-        (uint256 quote, bytes memory swapData) = adapter.getAmountOut(false, EXACT_AMOUNT_IN, bytes(""));
+        (uint256 quote, bytes memory swapData) = adapter.getAmountOut(USDC, WMON, EXACT_AMOUNT_IN, bytes(""));
         assertEq(quote, EXACT_AMOUNT_OUT);
 
         deal(USDC, address(this), EXACT_AMOUNT_IN);
         IERC20HanjiE2E(USDC).approve(address(adapter), EXACT_AMOUNT_IN);
         address recipient = makeAddr("hanji-exact-recipient");
-        uint256 amountOut = adapter.swap(false, recipient, EXACT_AMOUNT_IN, EXACT_AMOUNT_OUT, block.timestamp, swapData);
+        uint256 amountOut =
+            adapter.swap(USDC, WMON, recipient, EXACT_AMOUNT_IN, EXACT_AMOUNT_OUT, block.timestamp, swapData);
 
         assertEq(amountOut, EXACT_AMOUNT_OUT);
         assertEq(IERC20HanjiE2E(USDC).balanceOf(address(this)), 0);
@@ -60,7 +63,7 @@ contract HanjiAdapterE2ETest is Test {
         vm.createSelectFork(rpcUrl, DIVERGENT_BLOCK);
 
         HanjiAdapter adapter = _deployAdapter();
-        (uint256 quote, bytes memory swapData) = adapter.getAmountOut(false, DIVERGENT_AMOUNT_IN, bytes(""));
+        (uint256 quote, bytes memory swapData) = adapter.getAmountOut(USDC, WMON, DIVERGENT_AMOUNT_IN, bytes(""));
         assertEq(quote, DIVERGENT_QUOTE);
 
         deal(USDC, address(this), DIVERGENT_AMOUNT_IN);
@@ -68,7 +71,7 @@ contract HanjiAdapterE2ETest is Test {
         address recipient = makeAddr("hanji-divergent-recipient");
 
         vm.expectRevert();
-        adapter.swap(false, recipient, DIVERGENT_AMOUNT_IN, quote, block.timestamp, swapData);
+        adapter.swap(USDC, WMON, recipient, DIVERGENT_AMOUNT_IN, quote, block.timestamp, swapData);
 
         assertEq(IERC20HanjiE2E(USDC).balanceOf(address(this)), DIVERGENT_AMOUNT_IN);
         assertEq(IERC20HanjiE2E(WMON).balanceOf(recipient), 0);
@@ -76,7 +79,6 @@ contract HanjiAdapterE2ETest is Test {
 
     function _deployAdapter() private returns (HanjiAdapter adapter) {
         adapter = new HanjiAdapter(HANJI_WMON_USDC, HANJI_FAST_QUOTER_HELPER, MAX_PRICE_LEVELS);
-        assertEq(adapter.token0(), WMON);
-        assertEq(adapter.token1(), USDC);
+        AdapterMarketAssertions.assertMarket(adapter, WMON, USDC, HanjiAdapter.UnexpectedData.selector);
     }
 }

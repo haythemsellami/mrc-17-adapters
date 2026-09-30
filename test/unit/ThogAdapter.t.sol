@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {MRC15Adapter} from "../../src/base/MRC15Adapter.sol";
-import {ThogAdapter} from "../../src/adapters/ThogAdapter.sol";
-import {MockERC20} from "../mocks/MockERC20.sol";
-import {MockMalformedThog, MockMalformedThogTokens, MockNonCanonicalThogTokens, MockThog} from "../mocks/MockThog.sol";
+import { Test } from "forge-std/Test.sol";
+
+import { MRC17Adapter } from "../../src/base/MRC17Adapter.sol";
+import { ThogAdapter } from "../../src/adapters/ThogAdapter.sol";
+import { MockERC20 } from "../mocks/MockERC20.sol";
+import {
+    MockMalformedThog,
+    MockMalformedThogTokens,
+    MockNonCanonicalThogTokens,
+    MockThog
+} from "../mocks/MockThog.sol";
 
 contract MockResidualAllowanceERC20 is MockERC20 {
     mapping(address owner => mapping(address spender => bool sticky)) private _stickyAllowance;
 
-    constructor() MockERC20("Sticky", "STICKY", 18) {}
+    constructor() MockERC20("Sticky", "STICKY", 18) { }
 
     function approve(address spender, uint256 value) public override returns (bool) {
         bool approved = super.approve(spender, value);
@@ -25,11 +31,11 @@ contract MockResidualAllowanceERC20 is MockERC20 {
 }
 
 contract ThogAdapterUnitTest is Test {
-    bytes32 private constant POOL_ID = keccak256("thog-pool");
-    uint256 private constant AMOUNT_IN = 10 ether;
-    uint256 private constant AMOUNT_OUT = 19 ether;
-    uint256 private constant BLOCK_NUMBER = 1000;
-    uint256 private constant TIMESTAMP = 5000;
+    bytes32 private constant _POOL_ID = keccak256("thog-pool");
+    uint256 private constant _AMOUNT_IN = 10 ether;
+    uint256 private constant _AMOUNT_OUT = 19 ether;
+    uint256 private constant _BLOCK_NUMBER = 1000;
+    uint256 private constant _TIMESTAMP = 5000;
 
     address private user;
     address private recipient;
@@ -40,8 +46,8 @@ contract ThogAdapterUnitTest is Test {
     ThogAdapter private adapter;
 
     function setUp() public {
-        vm.roll(BLOCK_NUMBER);
-        vm.warp(TIMESTAMP);
+        vm.roll(_BLOCK_NUMBER);
+        vm.warp(_TIMESTAMP);
 
         user = makeAddr("user");
         recipient = makeAddr("recipient");
@@ -53,12 +59,12 @@ contract ThogAdapterUnitTest is Test {
         tokens[0] = address(otherToken);
         tokens[1] = address(token1);
         tokens[2] = address(token0);
-        venue = new MockThog(POOL_ID, tokens);
+        venue = new MockThog(_POOL_ID, tokens);
         adapter = new ThogAdapter(address(venue), address(token0), address(token1));
 
-        venue.configureQuote(address(token0), address(token1), AMOUNT_IN, AMOUNT_OUT, BLOCK_NUMBER - 1);
-        venue.configureQuote(address(token1), address(token0), AMOUNT_IN, AMOUNT_OUT, BLOCK_NUMBER);
-        venue.configureSwap(AMOUNT_OUT, AMOUNT_IN, AMOUNT_OUT);
+        venue.configureQuote(address(token0), address(token1), _AMOUNT_IN, _AMOUNT_OUT, _BLOCK_NUMBER - 1);
+        venue.configureQuote(address(token1), address(token0), _AMOUNT_IN, _AMOUNT_OUT, _BLOCK_NUMBER);
+        venue.configureSwap(_AMOUNT_OUT, _AMOUNT_IN, _AMOUNT_OUT);
 
         token0.mint(user, 1000 ether);
         token1.mint(user, 1000 ether);
@@ -71,17 +77,31 @@ contract ThogAdapterUnitTest is Test {
         vm.stopPrank();
     }
 
+    function test_rejectsUnsupportedAssetsInQuotesAndSwaps() public {
+        vm.expectRevert(MRC17Adapter.InvalidTokenPair.selector);
+        adapter.getAmountOut(address(token0), address(token0), 1, bytes(""));
+        vm.expectRevert(MRC17Adapter.InvalidTokenPair.selector);
+        adapter.getAmountOut(address(0xBEEF), address(token1), 1, bytes(""));
+        vm.expectRevert(MRC17Adapter.InvalidTokenPair.selector);
+        adapter.swap(address(token0), address(0xBEEF), recipient, 1, 0, block.timestamp, bytes(""));
+    }
+
+    function test_doesNotExposeTokenOrderingGetters() public view {
+        (bool first,) = address(adapter).staticcall(abi.encodeWithSignature("token0()"));
+        (bool second,) = address(adapter).staticcall(abi.encodeWithSignature("token1()"));
+        assertFalse(first);
+        assertFalse(second);
+    }
+
     function test_constructorStoresValidatedConfiguration() public view {
         assertEq(adapter.venue(), address(venue));
-        assertEq(adapter.token0(), address(token0));
-        assertEq(adapter.token1(), address(token1));
     }
 
     function test_constructorAcceptsTokensInAnyPositionWithinSuperset() public {
         ThogAdapter deployed = new ThogAdapter(address(venue), address(token1), address(otherToken));
-
-        assertEq(deployed.token0(), address(token1));
-        assertEq(deployed.token1(), address(otherToken));
+        venue.configureQuote(address(token1), address(otherToken), _AMOUNT_IN, _AMOUNT_OUT, 1);
+        (uint256 amountOut,) = deployed.getAmountOut(address(token1), address(otherToken), _AMOUNT_IN, bytes(""));
+        assertEq(amountOut, _AMOUNT_OUT);
     }
 
     function test_constructorRejectsNonContractVenue() public {
@@ -112,7 +132,7 @@ contract ThogAdapterUnitTest is Test {
 
     function test_constructorRejectsMultiplePoolIds() public {
         bytes32[] memory poolIds = new bytes32[](2);
-        poolIds[0] = POOL_ID;
+        poolIds[0] = _POOL_ID;
         poolIds[1] = keccak256("second-pool");
         venue.setPoolIds(poolIds);
 
@@ -128,14 +148,14 @@ contract ThogAdapterUnitTest is Test {
     }
 
     function test_constructorRejectsMalformedTokenDiscovery() public {
-        MockMalformedThogTokens malformed = new MockMalformedThogTokens(POOL_ID);
+        MockMalformedThogTokens malformed = new MockMalformedThogTokens(_POOL_ID);
 
         vm.expectRevert(ThogAdapter.InvalidPoolConfiguration.selector);
         new ThogAdapter(address(malformed), address(token0), address(token1));
     }
 
     function test_constructorRejectsNoncanonicalTokenAddressEncoding() public {
-        MockNonCanonicalThogTokens malformed = new MockNonCanonicalThogTokens(POOL_ID);
+        MockNonCanonicalThogTokens malformed = new MockNonCanonicalThogTokens(_POOL_ID);
 
         vm.expectRevert(ThogAdapter.InvalidPoolConfiguration.selector);
         new ThogAdapter(address(malformed), address(token0), address(token1));
@@ -145,7 +165,7 @@ contract ThogAdapterUnitTest is Test {
         address[] memory tokens = new address[](2);
         tokens[0] = address(otherToken);
         tokens[1] = address(token1);
-        venue.setTokens(POOL_ID, tokens);
+        venue.setTokens(_POOL_ID, tokens);
 
         vm.expectRevert(ThogAdapter.InvalidPoolConfiguration.selector);
         new ThogAdapter(address(venue), address(token0), address(token1));
@@ -155,7 +175,7 @@ contract ThogAdapterUnitTest is Test {
         address[] memory tokens = new address[](2);
         tokens[0] = address(token0);
         tokens[1] = address(otherToken);
-        venue.setTokens(POOL_ID, tokens);
+        venue.setTokens(_POOL_ID, tokens);
 
         vm.expectRevert(ThogAdapter.InvalidPoolConfiguration.selector);
         new ThogAdapter(address(venue), address(token0), address(token1));
@@ -166,7 +186,7 @@ contract ThogAdapterUnitTest is Test {
         tokens[0] = address(token0);
         tokens[1] = address(0);
         tokens[2] = address(token1);
-        venue.setTokens(POOL_ID, tokens);
+        venue.setTokens(_POOL_ID, tokens);
 
         vm.expectRevert(ThogAdapter.InvalidPoolConfiguration.selector);
         new ThogAdapter(address(venue), address(token0), address(token1));
@@ -177,14 +197,14 @@ contract ThogAdapterUnitTest is Test {
         tokens[0] = address(token0);
         tokens[1] = address(token1);
         tokens[2] = address(token0);
-        venue.setTokens(POOL_ID, tokens);
+        venue.setTokens(_POOL_ID, tokens);
 
         vm.expectRevert(ThogAdapter.InvalidPoolConfiguration.selector);
         new ThogAdapter(address(venue), address(token0), address(token1));
     }
 
     function test_constructorRejectsInvalidBasePair() public {
-        vm.expectRevert(MRC15Adapter.InvalidTokenPair.selector);
+        vm.expectRevert(MRC17Adapter.InvalidTokenPair.selector);
         new ThogAdapter(address(venue), address(token0), address(token0));
     }
 
@@ -198,97 +218,102 @@ contract ThogAdapterUnitTest is Test {
         tokens[1] = address(token1);
         venue.setTokens(rotatedPoolId, tokens);
 
-        (uint256 amountOut,) = adapter.getAmountOut(true, AMOUNT_IN, bytes(""));
+        (uint256 amountOut,) = adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, bytes(""));
 
-        assertEq(amountOut, AMOUNT_OUT);
+        assertEq(amountOut, _AMOUNT_OUT);
     }
 
     function test_getAmountOutQuotesBothDirectionsAndReturnsEmptySwapData() public view {
-        (uint256 token0Out, bytes memory token0Data) = adapter.getAmountOut(true, AMOUNT_IN, bytes(""));
-        (uint256 token1Out, bytes memory token1Data) = adapter.getAmountOut(false, AMOUNT_IN, bytes(""));
+        (uint256 zeroForOneOut, bytes memory zeroForOneData) =
+            adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, bytes(""));
+        (uint256 oneForZeroOut, bytes memory oneForZeroData) =
+            adapter.getAmountOut(address(token1), address(token0), _AMOUNT_IN, bytes(""));
 
-        assertEq(token0Out, AMOUNT_OUT);
-        assertEq(token1Out, AMOUNT_OUT);
-        assertEq(token0Data, bytes(""));
-        assertEq(token1Data, bytes(""));
+        assertEq(zeroForOneOut, _AMOUNT_OUT);
+        assertEq(oneForZeroOut, _AMOUNT_OUT);
+        assertEq(zeroForOneData, bytes(""));
+        assertEq(oneForZeroData, bytes(""));
     }
 
     function test_getAmountOutCompletesUnderStaticcall() public view {
-        (bool success, bytes memory result) =
-            address(adapter).staticcall(abi.encodeCall(adapter.getAmountOut, (true, AMOUNT_IN, bytes(""))));
+        (bool success, bytes memory result) = address(adapter)
+            .staticcall(abi.encodeCall(adapter.getAmountOut, (address(token0), address(token1), _AMOUNT_IN, bytes(""))));
 
         assertTrue(success);
         (uint256 amountOut, bytes memory swapData) = abi.decode(result, (uint256, bytes));
-        assertEq(amountOut, AMOUNT_OUT);
+        assertEq(amountOut, _AMOUNT_OUT);
         assertEq(swapData, bytes(""));
     }
 
     function test_getAmountOutRejectsUnexpectedData() public {
         vm.expectRevert(ThogAdapter.UnexpectedData.selector);
-        adapter.getAmountOut(true, AMOUNT_IN, hex"01");
+        adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, hex"01");
     }
 
     function test_getAmountOutRejectsZeroOutput() public {
-        venue.configureQuote(address(token0), address(token1), AMOUNT_IN, 0, BLOCK_NUMBER);
+        venue.configureQuote(address(token0), address(token1), _AMOUNT_IN, 0, _BLOCK_NUMBER);
 
         vm.expectRevert(ThogAdapter.InvalidQuote.selector);
-        adapter.getAmountOut(true, AMOUNT_IN, bytes(""));
+        adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, bytes(""));
     }
 
     function test_getAmountOutRejectsZeroPostedBlock() public {
-        venue.configureQuote(address(token0), address(token1), AMOUNT_IN, AMOUNT_OUT, 0);
+        venue.configureQuote(address(token0), address(token1), _AMOUNT_IN, _AMOUNT_OUT, 0);
 
         vm.expectRevert(ThogAdapter.InvalidQuote.selector);
-        adapter.getAmountOut(true, AMOUNT_IN, bytes(""));
+        adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, bytes(""));
     }
 
     function test_getAmountOutRejectsFuturePostedBlock() public {
-        venue.configureQuote(address(token0), address(token1), AMOUNT_IN, AMOUNT_OUT, BLOCK_NUMBER + 1);
+        venue.configureQuote(address(token0), address(token1), _AMOUNT_IN, _AMOUNT_OUT, _BLOCK_NUMBER + 1);
 
         vm.expectRevert(ThogAdapter.InvalidQuote.selector);
-        adapter.getAmountOut(true, AMOUNT_IN, bytes(""));
+        adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, bytes(""));
     }
 
     function test_getAmountOutAcceptsCurrentPostedBlock() public view {
-        (uint256 amountOut,) = adapter.getAmountOut(false, AMOUNT_IN, bytes(""));
+        (uint256 amountOut,) = adapter.getAmountOut(address(token1), address(token0), _AMOUNT_IN, bytes(""));
 
-        assertEq(amountOut, AMOUNT_OUT);
+        assertEq(amountOut, _AMOUNT_OUT);
     }
 
     function test_getAmountOutBubblesVenueRevert() public {
         venue.setFailureModes(false, false, true, false);
 
         vm.expectRevert(MockThog.QuoteFailed.selector);
-        adapter.getAmountOut(true, AMOUNT_IN, bytes(""));
+        adapter.getAmountOut(address(token0), address(token1), _AMOUNT_IN, bytes(""));
     }
 
-    function test_swapExecutesToken0ForToken1WithExactApprovalAndBlockDeadline() public {
-        uint256 amountOutMin = AMOUNT_OUT - 1;
+    function test_swapExecutesZeroForOneWithExactApprovalAndBlockDeadline() public {
+        uint256 amountOutMin = _AMOUNT_OUT - 1;
         uint256 userInputBefore = token0.balanceOf(user);
 
         vm.prank(user);
-        uint256 amountOut = adapter.swap(true, recipient, AMOUNT_IN, amountOutMin, TIMESTAMP + 1, bytes(""));
+        uint256 amountOut = adapter.swap(
+            address(token0), address(token1), recipient, _AMOUNT_IN, amountOutMin, _TIMESTAMP + 1, bytes("")
+        );
 
-        assertEq(amountOut, AMOUNT_OUT);
-        assertEq(userInputBefore - token0.balanceOf(user), AMOUNT_IN);
-        assertEq(token1.balanceOf(recipient), AMOUNT_OUT);
+        assertEq(amountOut, _AMOUNT_OUT);
+        assertEq(userInputBefore - token0.balanceOf(user), _AMOUNT_IN);
+        assertEq(token1.balanceOf(recipient), _AMOUNT_OUT);
         assertEq(token0.balanceOf(address(adapter)), 0);
         assertEq(token0.allowance(address(adapter), address(venue)), 0);
-        assertEq(venue.observedAllowance(), AMOUNT_IN);
+        assertEq(venue.observedAllowance(), _AMOUNT_IN);
         assertEq(venue.lastTokenIn(), address(token0));
         assertEq(venue.lastTokenOut(), address(token1));
-        assertEq(venue.lastAmountIn(), AMOUNT_IN);
+        assertEq(venue.lastAmountIn(), _AMOUNT_IN);
         assertEq(venue.lastAmountOutMin(), amountOutMin);
         assertEq(venue.lastRecipient(), recipient);
-        assertEq(venue.lastDeadlineBlock(), BLOCK_NUMBER);
+        assertEq(venue.lastDeadlineBlock(), _BLOCK_NUMBER);
     }
 
-    function test_swapExecutesToken1ForToken0() public {
+    function test_swapExecutesOneForZero() public {
         vm.prank(user);
-        uint256 amountOut = adapter.swap(false, recipient, AMOUNT_IN, AMOUNT_OUT, TIMESTAMP, bytes(""));
+        uint256 amountOut =
+            adapter.swap(address(token1), address(token0), recipient, _AMOUNT_IN, _AMOUNT_OUT, _TIMESTAMP, bytes(""));
 
-        assertEq(amountOut, AMOUNT_OUT);
-        assertEq(token0.balanceOf(recipient), AMOUNT_OUT);
+        assertEq(amountOut, _AMOUNT_OUT);
+        assertEq(token0.balanceOf(recipient), _AMOUNT_OUT);
         assertEq(token1.balanceOf(address(adapter)), 0);
         assertEq(token1.allowance(address(adapter), address(venue)), 0);
         assertEq(venue.lastTokenIn(), address(token1));
@@ -300,7 +325,7 @@ contract ThogAdapterUnitTest is Test {
         token0.mint(address(adapter), donatedInput);
 
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
 
         assertEq(token0.balanceOf(address(adapter)), donatedInput);
         assertEq(token0.allowance(address(adapter), address(venue)), 0);
@@ -311,19 +336,19 @@ contract ThogAdapterUnitTest is Test {
         token1.mint(address(adapter), donatedOutput);
 
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
 
         assertEq(token1.balanceOf(address(adapter)), donatedOutput);
-        assertEq(token1.balanceOf(recipient), AMOUNT_OUT);
+        assertEq(token1.balanceOf(recipient), _AMOUNT_OUT);
     }
 
     function test_swapRejectsPartialInputConsumptionEvenWithPreexistingBalance() public {
         token0.mint(address(adapter), 7 ether);
-        venue.configureSwap(AMOUNT_OUT, AMOUNT_IN - 1, AMOUNT_OUT);
+        venue.configureSwap(_AMOUNT_OUT, _AMOUNT_IN - 1, _AMOUNT_OUT);
 
         vm.expectRevert(ThogAdapter.IncompleteInputConsumption.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
 
         assertEq(token0.balanceOf(address(adapter)), 7 ether);
         assertEq(token0.allowance(address(adapter), address(venue)), 0);
@@ -331,11 +356,11 @@ contract ThogAdapterUnitTest is Test {
 
     function test_swapCannotConsumeMoreThanExactInputAllowance() public {
         token0.mint(address(adapter), 7 ether);
-        venue.configureSwap(AMOUNT_OUT, AMOUNT_IN + 1, AMOUNT_OUT);
+        venue.configureSwap(_AMOUNT_OUT, _AMOUNT_IN + 1, _AMOUNT_OUT);
 
         vm.expectRevert();
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
 
         assertEq(token0.balanceOf(address(adapter)), 7 ether);
         assertEq(token0.allowance(address(adapter), address(venue)), 0);
@@ -346,39 +371,39 @@ contract ThogAdapterUnitTest is Test {
         address[] memory tokens = new address[](2);
         tokens[0] = address(stickyToken);
         tokens[1] = address(token1);
-        MockThog stickyVenue = new MockThog(POOL_ID, tokens);
+        MockThog stickyVenue = new MockThog(_POOL_ID, tokens);
         ThogAdapter stickyAdapter = new ThogAdapter(address(stickyVenue), address(stickyToken), address(token1));
-        stickyVenue.configureSwap(AMOUNT_OUT, AMOUNT_IN, AMOUNT_OUT);
-        stickyToken.mint(user, AMOUNT_IN);
-        token1.mint(address(stickyVenue), AMOUNT_OUT);
+        stickyVenue.configureSwap(_AMOUNT_OUT, _AMOUNT_IN, _AMOUNT_OUT);
+        stickyToken.mint(user, _AMOUNT_IN);
+        token1.mint(address(stickyVenue), _AMOUNT_OUT);
         vm.prank(user);
-        stickyToken.approve(address(stickyAdapter), AMOUNT_IN);
+        stickyToken.approve(address(stickyAdapter), _AMOUNT_IN);
 
         vm.expectRevert(ThogAdapter.ResidualAllowance.selector);
         vm.prank(user);
-        stickyAdapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        stickyAdapter.swap(address(stickyToken), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
     }
 
     function test_swapRejectsZeroReportedOutput() public {
-        venue.configureSwap(0, AMOUNT_IN, 0);
+        venue.configureSwap(0, _AMOUNT_IN, 0);
 
         vm.expectRevert(ThogAdapter.InvalidSwapResult.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
     }
 
     function test_swapRejectsDishonestReportedOutput() public {
-        venue.configureSwap(AMOUNT_OUT, AMOUNT_IN, AMOUNT_OUT - 1);
+        venue.configureSwap(_AMOUNT_OUT, _AMOUNT_IN, _AMOUNT_OUT - 1);
 
-        vm.expectRevert(MRC15Adapter.OutputBalanceMismatch.selector);
+        vm.expectRevert(MRC17Adapter.OutputBalanceMismatch.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
     }
 
     function test_swapRejectsOutputBelowMinimum() public {
-        vm.expectRevert(MRC15Adapter.SlippageExceeded.selector);
+        vm.expectRevert(MRC17Adapter.SlippageExceeded.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, AMOUNT_OUT + 1, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, _AMOUNT_OUT + 1, _TIMESTAMP, bytes(""));
     }
 
     function test_swapRejectsUnexpectedDataWithoutMovingFunds() public {
@@ -386,15 +411,15 @@ contract ThogAdapterUnitTest is Test {
 
         vm.expectRevert(ThogAdapter.UnexpectedData.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, hex"01");
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, hex"01");
 
         assertEq(token0.balanceOf(user), userBalanceBefore);
     }
 
     function test_swapRejectsExpiredTimestampBeforeCallingVenue() public {
-        vm.expectRevert(MRC15Adapter.DeadlineExpired.selector);
+        vm.expectRevert(MRC17Adapter.DeadlineExpired.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP - 1, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP - 1, bytes(""));
 
         assertEq(venue.lastRecipient(), address(0));
     }
@@ -404,7 +429,7 @@ contract ThogAdapterUnitTest is Test {
 
         vm.expectRevert(MockThog.SwapFailed.selector);
         vm.prank(user);
-        adapter.swap(true, recipient, AMOUNT_IN, 0, TIMESTAMP, bytes(""));
+        adapter.swap(address(token0), address(token1), recipient, _AMOUNT_IN, 0, _TIMESTAMP, bytes(""));
 
         assertEq(token0.allowance(address(adapter), address(venue)), 0);
     }

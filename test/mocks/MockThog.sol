@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IThogAMM} from "../../src/adapters/ThogAdapter.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+import { IThogAMM } from "../../src/adapters/ThogAdapter.sol";
+
+/// @notice Configurable ThogAMM mock for discovery, quote, and exact-settlement adapter tests.
 contract MockThog is IThogAMM {
     using SafeERC20 for IERC20;
 
@@ -127,6 +129,7 @@ contract MockThog is IThogAMM {
     }
 }
 
+/// @notice Contract with the ThogAMM discovery selectors but malformed dynamic-array return data.
 contract MockMalformedThog {
     fallback() external {
         assembly ("memory-safe") {
@@ -136,6 +139,7 @@ contract MockMalformedThog {
     }
 }
 
+/// @notice Contract with valid pool discovery but malformed token-array return data.
 contract MockMalformedThogTokens {
     bytes32 private immutable _poolId;
 
@@ -156,6 +160,7 @@ contract MockMalformedThogTokens {
     }
 }
 
+/// @notice Contract that returns a correctly shaped token array with a noncanonical address word.
 contract MockNonCanonicalThogTokens {
     bytes32 private immutable _poolId;
 

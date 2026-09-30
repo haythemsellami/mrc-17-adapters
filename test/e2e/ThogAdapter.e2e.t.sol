@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {IThogAMM, ThogAdapter} from "../../src/adapters/ThogAdapter.sol";
+import { AdapterMarketAssertions } from "../utils/AdapterMarketAssertions.sol";
+import { Test } from "forge-std/Test.sol";
+import { IThogAMM, ThogAdapter } from "../../src/adapters/ThogAdapter.sol";
 
 interface IERC20ThogE2E {
     function approve(address spender, uint256 amount) external returns (bool);
@@ -54,7 +55,7 @@ contract ThogAdapterE2ETest is Test {
         forkEnabled = true;
     }
 
-    function test_discoversSinglePoolAndConfiguredTokensThroughStaticcall() public view {
+    function test_discoversSinglePoolAndConfiguredTokensThroughStaticcall() public {
         if (!forkEnabled) return;
 
         (bool idsSuccess, bytes memory idsResult) = THOG.staticcall(abi.encodeCall(IThogAMM.getPoolIds, ()));
@@ -70,8 +71,7 @@ contract ThogAdapterE2ETest is Test {
         assertTrue(_contains(tokens, USDC));
 
         assertEq(adapter.venue(), THOG);
-        assertEq(adapter.token0(), WMON);
-        assertEq(adapter.token1(), USDC);
+        AdapterMarketAssertions.assertMarket(adapter, WMON, USDC, ThogAdapter.UnexpectedData.selector);
 
         address implementation = address(uint160(uint256(vm.load(THOG, ERC1967_IMPLEMENTATION_SLOT))));
         assertEq(implementation, PINNED_IMPLEMENTATION);
@@ -86,8 +86,7 @@ contract ThogAdapterE2ETest is Test {
         ThogAdapter currentAdapter = new ThogAdapter(THOG, WMON, USDC);
 
         assertEq(currentAdapter.venue(), THOG);
-        assertEq(currentAdapter.token0(), WMON);
-        assertEq(currentAdapter.token1(), USDC);
+        AdapterMarketAssertions.assertMarket(currentAdapter, WMON, USDC, ThogAdapter.UnexpectedData.selector);
     }
 
     function test_quotesAndExecutesWmonForUsdc() public {
@@ -97,7 +96,7 @@ contract ThogAdapterE2ETest is Test {
         assertEq(directQuote, PINNED_WMON_AMOUNT_OUT);
         assertEq(lastPostedBlock, PINNED_LAST_POSTED_BLOCK);
 
-        (uint256 adapterQuote, bytes memory swapData) = adapter.getAmountOut(true, WMON_AMOUNT_IN, bytes(""));
+        (uint256 adapterQuote, bytes memory swapData) = adapter.getAmountOut(WMON, USDC, WMON_AMOUNT_IN, bytes(""));
         assertEq(adapterQuote, directQuote);
         assertEq(swapData, bytes(""));
 
@@ -106,7 +105,7 @@ contract ThogAdapterE2ETest is Test {
         IERC20ThogE2E(WMON).approve(address(adapter), WMON_AMOUNT_IN);
 
         vm.prank(user);
-        uint256 amountOut = adapter.swap(true, recipient, WMON_AMOUNT_IN, adapterQuote, block.timestamp, swapData);
+        uint256 amountOut = adapter.swap(WMON, USDC, recipient, WMON_AMOUNT_IN, adapterQuote, block.timestamp, swapData);
 
         assertEq(amountOut, adapterQuote);
         assertEq(IERC20ThogE2E(WMON).balanceOf(user), 0);
@@ -122,7 +121,7 @@ contract ThogAdapterE2ETest is Test {
         assertEq(directQuote, PINNED_USDC_AMOUNT_OUT);
         assertEq(lastPostedBlock, PINNED_LAST_POSTED_BLOCK);
 
-        (uint256 adapterQuote, bytes memory swapData) = adapter.getAmountOut(false, USDC_AMOUNT_IN, bytes(""));
+        (uint256 adapterQuote, bytes memory swapData) = adapter.getAmountOut(USDC, WMON, USDC_AMOUNT_IN, bytes(""));
         assertEq(adapterQuote, directQuote);
         assertEq(swapData, bytes(""));
 
@@ -131,7 +130,7 @@ contract ThogAdapterE2ETest is Test {
         IERC20ThogE2E(USDC).approve(address(adapter), USDC_AMOUNT_IN);
 
         vm.prank(user);
-        uint256 amountOut = adapter.swap(false, recipient, USDC_AMOUNT_IN, adapterQuote, block.timestamp, swapData);
+        uint256 amountOut = adapter.swap(USDC, WMON, recipient, USDC_AMOUNT_IN, adapterQuote, block.timestamp, swapData);
 
         assertEq(amountOut, adapterQuote);
         assertEq(IERC20ThogE2E(USDC).balanceOf(user), 0);

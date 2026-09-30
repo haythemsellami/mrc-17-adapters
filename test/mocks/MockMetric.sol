@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
 import {
     IMetricLegacyPool,
     IMetricLegacyPriceProvider,
@@ -16,6 +17,15 @@ contract MockMetricPool is IMetricLegacyPool {
     constructor(address priceProvider_, address token0_, address token1_) {
         _poolImmutables.factory = address(this);
         _poolImmutables.priceProvider = priceProvider_;
+        _poolImmutables.token0 = token0_;
+        _poolImmutables.token1 = token1_;
+    }
+
+    function setPriceProvider(address priceProvider_) external {
+        _poolImmutables.priceProvider = priceProvider_;
+    }
+
+    function setTokens(address token0_, address token1_) external {
         _poolImmutables.token0 = token0_;
         _poolImmutables.token1 = token1_;
     }
@@ -34,6 +44,11 @@ contract MockMetricPriceProvider is IMetricLegacyPriceProvider {
         askPriceX64 = askPriceX64_;
     }
 
+    function setPrices(uint128 bidPriceX64_, uint128 askPriceX64_) external {
+        bidPriceX64 = bidPriceX64_;
+        askPriceX64 = askPriceX64_;
+    }
+
     function getBidAndAskPrice() external view returns (uint128, uint128) {
         return (bidPriceX64, askPriceX64);
     }
@@ -42,17 +57,24 @@ contract MockMetricPriceProvider is IMetricLegacyPriceProvider {
 contract MockMetricRouter is IMetricLegacyRouter {
     using SafeERC20 for IERC20;
 
+    error QuoteFailed();
+    error SwapFailed();
+
     int128 public quoteAmount0Delta;
     int128 public quoteAmount1Delta;
     uint256 public swapAmountOut;
     uint256 public swapAmountInUsed;
     uint256 public swapPullAmount;
     uint256 public swapTransferAmount;
+    bool public revertQuote;
+    bool public revertSwap;
 
     uint256 public quoteCalls;
     address public lastPool;
     address public lastRecipient;
     bool public lastZeroForOne;
+    int128 public lastAmountSpecified;
+    uint128 public lastAmountIn;
     uint128 public lastPriceLimitX64;
     uint128 public lastBidPriceX64;
     uint128 public lastAskPriceX64;
@@ -73,20 +95,29 @@ contract MockMetricRouter is IMetricLegacyRouter {
         swapTransferAmount = transferAmount_;
     }
 
+    function setFailureModes(bool revertQuote_, bool revertSwap_) external {
+        revertQuote = revertQuote_;
+        revertSwap = revertSwap_;
+    }
+
     function quoteSwap(
         address pool,
         bool zeroForOne,
-        int128,
+        int128 amountSpecified,
         uint128 priceLimitX64,
         uint128 bidPriceX64,
         uint128 askPriceX64
     ) external returns (int128 amount0Delta, int128 amount1Delta) {
+        if (revertQuote) revert QuoteFailed();
+
         ++quoteCalls;
         lastPool = pool;
         lastZeroForOne = zeroForOne;
+        lastAmountSpecified = amountSpecified;
         lastPriceLimitX64 = priceLimitX64;
         lastBidPriceX64 = bidPriceX64;
         lastAskPriceX64 = askPriceX64;
+
         return (quoteAmount0Delta, quoteAmount1Delta);
     }
 
@@ -94,14 +125,17 @@ contract MockMetricRouter is IMetricLegacyRouter {
         address pool,
         address recipient,
         bool zeroForOne,
-        uint128,
+        uint128 amountIn,
         uint128 priceLimitX64,
         uint256 amountOutMin,
         uint256 deadline
     ) external payable returns (uint256 amountOut, uint256 amountInUsed) {
+        if (revertSwap) revert SwapFailed();
+
         lastPool = pool;
         lastRecipient = recipient;
         lastZeroForOne = zeroForOne;
+        lastAmountIn = amountIn;
         lastPriceLimitX64 = priceLimitX64;
         lastAmountOutMin = amountOutMin;
         lastDeadline = deadline;
@@ -109,6 +143,7 @@ contract MockMetricRouter is IMetricLegacyRouter {
         MetricPoolImmutables memory poolImmutables = IMetricLegacyPool(pool).getImmutables();
         IERC20 inputToken = IERC20(zeroForOne ? poolImmutables.token0 : poolImmutables.token1);
         IERC20 outputToken = IERC20(zeroForOne ? poolImmutables.token1 : poolImmutables.token0);
+
         inputToken.safeTransferFrom(msg.sender, address(this), swapPullAmount);
         outputToken.safeTransfer(recipient, swapTransferAmount);
 

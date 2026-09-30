@@ -1,6 +1,6 @@
-# MRC-15 adapters
+# MRC-17 adapters
 
-Solidity adapters for integrating Monad proprietary AMMs through the MRC-15 exact-input interface.
+Solidity adapters for integrating Monad proprietary AMMs through the MRC-17 exact-input interface.
 
 The repository ships five venue adapters:
 
@@ -10,17 +10,51 @@ The repository ships five venue adapters:
 - `HanjiAdapter`: Hanji order-book markets using helper ladders and exact-execution checks.
 - `ThogAdapter`: ThogAMM inventory-backed maker markets with rotating pool discovery.
 
-## MRC-15 behavior
+## Installation
 
-Each adapter represents one fixed ERC-20 pair and implements `IPropAMMRouter`:
+Install the package in a Foundry project and commit the resulting submodule revision:
 
-- `token0` and `token1` provide stable canonical token ordering.
-- `getAmountOut` has a non-view interface and requires neither tokens nor an allowance.
+```sh
+forge install haythemsellami/mrc-17-adapters
+```
+
+Add `mrc-17-adapters/=lib/mrc-17-adapters/` to your `remappings.txt`, then import the shared interface or a venue:
+
+```solidity
+import { IPropAMMRouter } from "mrc-17-adapters/src/interfaces/IPropAMMRouter.sol";
+import { PoeAdapter } from "mrc-17-adapters/src/adapters/PoeAdapter.sol";
+```
+
+The package owns the venue implementations, `src/base/MRC17Adapter.sol`, and adapter unit tests. Consumers such as
+[Monoper](https://github.com/haythemsellami/monoper) import this package and retain their router integration tests.
+Use Solidity 0.8.26 or later and a Cancun-compatible EVM; the shared base uses transient-storage reentrancy protection.
+The tested dependency versions are pinned in `foundry.lock`.
+
+## MRC-17 behavior
+
+The interface supports one or more markets per contract. These adapters each represent one fixed ERC-20 pair:
+
+- `tokenIn` and `tokenOut` explicitly select the assets and direction; unsupported pairs revert;
+- the interface requires no token-ordering or pair-discovery getters;
+- `getAmountOut` has a non-view interface and requires neither tokens nor an allowance;
 - routers must call every quote through ordinary EVM `CALL` inside a child frame that always reverts;
 - `swap` pulls exactly `amountIn` from the immediate caller using ERC-20 `transferFrom` semantics;
 - the adapter independently enforces a non-zero recipient, deadline, and minimum output;
 - the returned output equals the recipient's observable ERC-20 balance increase; and
-- every successful swap emits `PropAMMSwap` with the immediate caller, recipient, direction, input, and actual output.
+- every successful swap emits `PropAMMSwap` with the immediate caller, recipient, input and output assets, input
+  amount, and actual output.
+
+The shared [interface](src/interfaces/IPropAMMRouter.sol) exposes:
+
+```solidity
+function getAmountOut(address tokenIn, address tokenOut, uint256 amountIn, bytes calldata quoteData)
+    external returns (uint256 amountOut, bytes memory swapData);
+
+function swap(address tokenIn, address tokenOut, address to, uint256 amountIn, uint256 amountOutMin,
+    uint256 deadline, bytes calldata swapData) external returns (uint256 amountOut);
+```
+
+This ABI requires new adapter deployments and updated callers; renaming an existing deployment does not change its ABI.
 
 Poe, Clober, Hanji, and ThogAMM currently use static-compatible quote paths, but integrations must not depend on that.
 Metric's legacy quote path changes state and fails under `STATICCALL`; it works through the standard rollback-isolated
@@ -57,7 +91,7 @@ Deploy one `CloberAdapter` per pair, supplying the directional mirror books in c
 | WBTC / USDC | `5310657737502833383554997860081619839164052597766524570606` | `3854396250455310695147789948131437079035726850548834252223` |
 | WETH / USDC | `680091963353999958661303284433884846705699901928885914311` | `6215929461771924482215683498685754109371513948112281158916` |
 
-Clober represents MON as `address(0)` internally. The adapter exposes WMON at the MRC-15 boundary and rejects quotes
+Clober represents MON as `address(0)` internally. The adapter exposes WMON at the MRC-17 boundary and rejects quotes
 unless the viewer reports that the complete exact input is executable.
 
 ### Metric legacy
@@ -109,10 +143,17 @@ fresh compatibility and fork-test evidence.
 ## Tests
 
 ```sh
+git submodule update --init --recursive
+forge build
+forge fmt --check
+forge test --match-path 'test/unit/*'
 forge test
-MONAD_RPC_URL=https://rpc.monad.xyz forge test --match-path 'test/e2e/*'
-MONAD_ARCHIVE_RPC_URL="YOUR_ARCHIVE_RPC_URL" forge test --match-test test_exactBoundaryQuoteExecutes
+FOUNDRY_HARDFORK=monad:MonadNine forge test --network monad --match-path 'test/e2e/*'
 ```
+
+Foundry loads the gitignored `.env` automatically. Copy `.env.example` and configure `MONAD_RPC_URL` and an
+archive-capable `MONAD_ARCHIVE_RPC_URL` before running fork tests. Missing RPC configuration is reported as a skip.
+Fork tests use the pinned Monad Foundry `v1.7.1-monad-v1.0.0` toolchain.
 
 The fork suite validates Poe, Clober, Metric, and ThogAMM at Monad block `90,990,000`. Hanji controls cover a known
 exact execution boundary at block `88,161,153` and a known quote/execution divergence at block `90,990,000`.

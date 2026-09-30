@@ -1,8 +1,9 @@
 # Monad propAMM compatibility
 
-This document records the current MRC-15 compatibility review of the supported Monad propAMMs. Compatibility was
-revalidated against Monad mainnet block `90,990,000`; Hanji exact-execution controls additionally use block
-`88,161,153`.
+This document describes the MRC-17 wrappers for the supported Monad propAMMs. Their fork fixtures use Monad mainnet
+block `90,990,000`; Hanji exact-execution controls additionally use block `88,161,153`.
+Both quote and swap calls identify direction with explicit `tokenIn` and `tokenOut` addresses. Each wrapper validates
+its configured pair without exposing token-ordering getters.
 
 ## Status
 
@@ -14,14 +15,14 @@ revalidated against Monad mainnet block `90,990,000`; Hanji exact-execution cont
 | Hanji | Static-compatible helper ladder | Proxy execution with exact-input verification | Operational exception requiring complete-swap simulation and winner pruning |
 | ThogAMM | Static-compatible maker quote | Maker pulls exact input and credits the recipient | Supported with per-implementation revalidation |
 
-A conforming adapter must satisfy MRC-15's exact-input funding, executable-quote, and recipient-settlement
+A conforming adapter must satisfy MRC-17's exact-input funding, executable-quote, and recipient-settlement
 requirements. Hanji is the explicitly documented exception: it is usable with a simulation-gated builder flow but is
 not claimed to satisfy strict same-state quote fidelity.
 
 ## LFJ POE
 
 `PoeAdapter` reads the pool's fixed token order, rejects quotes that do not consume the complete requested input, and
-authenticates POE's settlement callback before paying the pool. POE sends output directly to the MRC-15 recipient, and
+authenticates POE's settlement callback before paying the pool. POE sends output directly to the MRC-17 recipient, and
 the shared base verifies the recipient's balance increase.
 
 | Contract | Monad address |
@@ -33,7 +34,7 @@ the shared base verifies the recipient's balance increase.
 
 `CloberAdapter` validates its BookManager, BookViewer, Controller, and mirrored directional books at construction.
 Quotes revert unless the viewer reports that the full exact input is executable. For native-MON books, the adapter
-normalizes the MRC-15 endpoint to WMON and wraps or unwraps only during venue settlement.
+normalizes the MRC-17 endpoint to WMON and wraps or unwraps only during venue settlement.
 
 | Contract | Monad address |
 | --- | --- |
@@ -49,7 +50,7 @@ normalizes the MRC-15 endpoint to WMON and wraps or unwraps only during venue se
 
 ## Metric legacy
 
-`MetricAdapter` calls the legacy router's state-changing `quoteSwap` path. This is compatible with the current MRC-15
+`MetricAdapter` calls the legacy router's state-changing `quoteSwap` path. This is compatible with the current MRC-17
 because quotes use ordinary `CALL` inside a child frame that always rolls back. The adapter reads the pool's price
 provider for its bid and ask inputs, validates signed quote deltas, and requires both quoted and reported executed
 input to equal the requested exact input.
@@ -100,8 +101,8 @@ no greater than the current block. Quote and swap data must both be empty. Execu
 exactly `amountIn`, calls
 `makerSwapExactInput(tokenIn, tokenOut, amountIn, amountOutMin, recipient, block.number)`, clears and verifies the
 allowance, and proves the venue consumed exactly the newly received input without touching a preexisting adapter
-balance. ThogAMM sends output directly to the MRC-15 recipient, so the shared base also checks the actual recipient
-balance delta against the venue's reported output. MRC-15's user deadline remains timestamp-based and is enforced by
+balance. ThogAMM sends output directly to the MRC-17 recipient, so the shared base also checks the actual recipient
+balance delta against the venue's reported output. MRC-17's user deadline remains timestamp-based and is enforced by
 the base before the venue receives its block-number deadline.
 
 | Deployment input | Monad address |
